@@ -21,21 +21,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install glslang
         run: sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools
-      - name: Every shader must start with '#version 410 core'
-        run: |
-          bad=0
-          for f in $(find shaders -name '*.vert' -o -name '*.frag' -o -name '*.glsl'); do
-            first=$(grep -m1 -v '^\s*$' "$f" | tr -d '\r')
-            if [ "$first" != "#version 410 core" ]; then
-              echo "::error file=$f::first line must be '#version 410 core' (got: $first)"; bad=1
-            fi
-          done
-          exit $bad
-      - name: Compile shaders with glslangValidator
-        run: |
-          shopt -s nullglob
-          files=(shaders/*.vert shaders/*.frag)
-          glslangValidator "${files[@]}"
+      - name: Validate shaders (GLSL 410, #include expanded)
+        run: python3 tools/check_shaders.py
 
   build:
     name: ${{ matrix.os }}
@@ -60,3 +47,5 @@ jobs:
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test (CPU)
+        run: ctest --preset ${{ matrix.preset }}

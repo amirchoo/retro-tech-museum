@@ -29,6 +29,13 @@ cmake --build --preset mac
 ./build/mac/museum
 ```
 
+### Tests
+
+```bash
+ctest --preset mac        # or: ctest --preset windows   (CPU tests: layout, BVH traversal, gallery)
+python3 tools/check_shaders.py   # GLSL 410 validation, needs glslangValidator
+```
+
 ### Smoke test
 
 ```bash
@@ -43,6 +50,7 @@ museum --smoke-test out.png             # renders 30 frames, saves a screenshot,
 | Tab / Esc | release mouse (use ImGui) |
 | WASD, Shift | move, sprint |
 | F | toggle fly mode (Space / Ctrl = up / down) |
+| T | toggle raster / ray cast |
 | F5 | reload shaders from disk (no rebuild needed) |
 
 ## Rules (read this — it keeps the Mac build alive)
@@ -77,4 +85,4 @@ assets/        models/ and textures/ — see docs/CREDITS.md
 external/glad/ generated loader: OpenGL 4.1 core (don't edit)
 ```
 
-`src/core/test_scene.*` and `shaders/test_scene.*` are a **temporary** placeholder room. Delete them once real assets load.
+The hallway layout (6 pedestals + arcade) lives in `src/scene/gallery.*`. Exhibits are placeholder boxes until the OBJ loader lands. See `docs/HANDOFF.md`.

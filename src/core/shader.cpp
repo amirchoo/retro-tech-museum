@@ -23,6 +23,40 @@ std::string readTextFile(const std::string& path) {
     return ss.str();
 }
 
+// Resolves `#include "file.glsl"` (path relative to shaders/), recursively, each file once.
+// GLSL has no #include; this is ours. CI does the same expansion in tools/expand_glsl.py.
+static std::string expandIncludes(const std::string& src, std::vector<std::string>& seen, int depth = 0) {
+    if (depth > 8) {
+        std::fprintf(stderr, "[shader] #include nested too deep\n");
+        return src;
+    }
+    std::stringstream in(src), out;
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t p = line.find("#include");
+        const size_t q1 = line.find('"');
+        const size_t q2 = line.rfind('"');
+        if (p != std::string::npos && line.find_first_not_of(" \t") == p && q1 != std::string::npos && q2 > q1) {
+            const std::string name = line.substr(q1 + 1, q2 - q1 - 1);
+            bool already = false;
+            for (const std::string& s : seen) already |= (s == name);
+            if (!already) {
+                seen.push_back(name);
+                out << expandIncludes(readTextFile(shaderPath(name)), seen, depth + 1) << "\n";
+            }
+        } else {
+            out << line << "\n";
+        }
+    }
+    return out.str();
+}
+
+static std::string loadShaderSource(const std::string& path) {
+    std::vector<std::string> seen;
+    const std::string src = readTextFile(path);
+    return src.empty() ? src : expandIncludes(src, seen);
+}
+
 static GLuint compile(GLenum stage, const std::string& src, const std::string& path) {
     GLuint s = glCreateShader(stage);
     const char* p = src.c_str();
@@ -53,7 +87,7 @@ Shader::~Shader() {
 
 bool Shader::reload() {
     const std::string vp = shaderPath(vertPath_), fp = shaderPath(fragPath_);
-    const std::string vsrc = readTextFile(vp), fsrc = readTextFile(fp);
+    const std::string vsrc = loadShaderSource(vp), fsrc = loadShaderSource(fp);
     if (vsrc.empty() || fsrc.empty()) return false;
 
     GLuint vs = compile(GL_VERTEX_SHADER, vsrc, vp);

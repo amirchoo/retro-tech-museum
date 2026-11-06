@@ -62,33 +62,57 @@ add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 
 # ---------------------------------------------------------------------------
-# App
+# rtm: everything except main.cpp, so tests can link the same code.
 # ---------------------------------------------------------------------------
-file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
+file(GLOB_RECURSE RTM_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_SOURCE_DIR}/src/*.cpp
     ${CMAKE_SOURCE_DIR}/src/*.h)
+list(REMOVE_ITEM RTM_SOURCES ${CMAKE_SOURCE_DIR}/src/main.cpp)
 
-add_executable(museum ${APP_SOURCES})
-target_include_directories(museum PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(museum PRIVATE glad glfw glm::glm imgui stb)
+add_library(rtm STATIC ${RTM_SOURCES})
+target_include_directories(rtm PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(rtm PUBLIC glad glfw glm::glm imgui stb)
 
 # Shaders/assets are read straight from the source tree, so edits need no rebuild
 # and the exe runs from any working directory (VS, Xcode, terminal).
-target_compile_definitions(museum PRIVATE
+target_compile_definitions(rtm PUBLIC
     RTM_SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
     RTM_ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/"
     GLM_FORCE_SILENT_WARNINGS)
 
 if(APPLE)
-    target_compile_definitions(museum PRIVATE GL_SILENCE_DEPRECATION)
-    target_link_libraries(museum PRIVATE "-framework OpenGL")
+    target_compile_definitions(rtm PUBLIC GL_SILENCE_DEPRECATION)
+    target_link_libraries(rtm PUBLIC "-framework OpenGL")
+endif()
+if(MSVC)
+    target_compile_definitions(rtm PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
 endif()
 
+function(rtm_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+endfunction()
+rtm_warnings(rtm)
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+add_executable(museum src/main.cpp)
+target_link_libraries(museum PRIVATE rtm)
+rtm_warnings(museum)
 if(MSVC)
-    target_compile_options(museum PRIVATE /W4 /permissive- /utf-8)
-    target_compile_definitions(museum PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
     set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT museum)
     set_property(TARGET museum PROPERTY VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-else()
-    target_compile_options(museum PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
+
+# ---------------------------------------------------------------------------
+# Tests (CPU only, no GPU/window needed -> run in CI):  ctest --preset <mac|windows>
+# ---------------------------------------------------------------------------
+enable_testing()
+add_executable(rtm_tests tests/test_main.cpp tests/test_gpu_layout.cpp)
+target_link_libraries(rtm_tests PRIVATE rtm)
+rtm_warnings(rtm_tests)
+add_test(NAME rtm_tests COMMAND rtm_tests)

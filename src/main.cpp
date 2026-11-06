@@ -1,9 +1,12 @@
 // Retro Tech Museum -- entry point.
 //
 // Controls:  click the view to capture the mouse, Tab/Esc to release it
-//            WASD move, Shift sprint, F fly mode (Space/Ctrl up/down), F5 reload shaders
+//            WASD move, Shift sprint, F fly mode (Space/Ctrl up/down)
+//            T toggle raster / ray-cast, F5 reload shaders
 //
 // Flags:     --smoke-test <out.png>   render a few frames, save a screenshot, exit (0 = OK)
+//            --mode raster|cast       start in this render mode
+//            --view shaded|normals|instances   (cast mode debug view)
 
 #include <cmath>
 #include <cstdio>
@@ -12,6 +15,7 @@
 #include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
@@ -19,19 +23,34 @@
 
 #include "core/camera.h"
 #include "core/gl.h"
+#include "core/mesh_gpu.h"
 #include "core/shader.h"
-#include "core/test_scene.h"
 #include "core/window.h"
+#include "scene/gpu_scene.h"
+#include "scene/scene.h"
+#include "scene/gallery.h"
 
 namespace {
 
+enum class RenderMode { Raster = 0, Cast = 1 };  // Cast -> PathTrace once 하직's tracer lands
+
 struct SpotLight {
-    glm::vec3 position{0.0f, 3.4f, -1.5f};
-    glm::vec3 target{0.0f, 0.0f, -2.5f};
+    // One wide ceiling light for now; per-exhibit spotlights are 알리's (lighting).
+    glm::vec3 position{0.0f, 3.4f, 0.0f};
+    glm::vec3 target{0.0f, 0.0f, -0.5f};
     glm::vec3 color{1.0f, 0.92f, 0.8f};
     float intensity = 6.0f;
-    float innerDeg = 25.0f, outerDeg = 40.0f;
-    float ambient = 0.08f;
+    float innerDeg = 50.0f, outerDeg = 72.0f;
+    float ambient = 0.12f;
+
+    void apply(const rtm::Shader& s) const {
+        s.set("uLightPos", position);
+        s.set("uLightDir", glm::normalize(target - position));
+        s.set("uLightColor", color * intensity);
+        s.set("uCosInner", std::cos(glm::radians(innerDeg)));
+        s.set("uCosOuter", std::cos(glm::radians(outerDeg)));
+        s.set("uAmbient", ambient);
+    }
 };
 
 bool saveScreenshot(const char* path, int w, int h) {
@@ -43,12 +62,38 @@ bool saveScreenshot(const char* path, int w, int h) {
     return stbi_write_png(path, w, h, 3, px.data(), w * 3) != 0;
 }
 
+void drawRaster(const rtm::Scene& scene, const std::vector<rtm::GpuMesh>& meshes, const rtm::Shader& sh) {
+    for (const rtm::Instance& inst : scene.instances) {
+        const glm::mat4 model = inst.transform.matrix();
+        sh.set("uModel", model);
+        sh.set("uNormalMatrix", glm::mat3(glm::transpose(glm::inverse(model))));
+        const rtm::Mesh& mesh = scene.meshes[static_cast<size_t>(inst.mesh)];
+        for (const rtm::SubMesh& sm : mesh.submeshes) {
+            const rtm::Material& m = scene.materials[static_cast<size_t>(sm.material)];
+            sh.set("uBaseColor", m.baseColor);
+            sh.set("uMetallic", m.metallic);
+            sh.set("uRoughness", m.roughness);
+            sh.set("uEmission", m.emission);
+            meshes[static_cast<size_t>(inst.mesh)].drawSubMesh(sm);
+        }
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     const char* smokeOut = nullptr;
-    for (int i = 1; i < argc; ++i)
+    RenderMode mode = RenderMode::Raster;
+    int castView = 0;
+    for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--smoke-test") == 0 && i + 1 < argc) smokeOut = argv[++i];
+        else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc)
+            mode = std::strcmp(argv[++i], "cast") == 0 ? RenderMode::Cast : RenderMode::Raster;
+        else if (std::strcmp(argv[i], "--view") == 0 && i + 1 < argc) {
+            const char* v = argv[++i];
+            castView = std::strcmp(v, "normals") == 0 ? 1 : std::strcmp(v, "instances") == 0 ? 2 : 0;
+        }
+    }
 
     rtm::Window window(1280, 720, "Retro Tech Museum");
     if (!window.ok()) return 1;
@@ -60,16 +105,31 @@ int main(int argc, char** argv) {
     ImGui_ImplGlfw_InitForOpenGL(window.handle(), true);
     ImGui_ImplOpenGL3_Init(rtm::kGLSLVersion);
 
-    rtm::Shader shader("test_scene.vert", "test_scene.frag");
-    if (!shader.ok()) return 1;
-    rtm::TestScene scene;
+    rtm::Shader rasterShader("raster_basic.vert", "raster_basic.frag");
+    rtm::Shader castShader("fullscreen.vert", "debug_cast.frag");
+    if (!rasterShader.ok() || !castShader.ok()) return 1;
+
+    rtm::Scene scene = rtm::makeGallery();
+    std::vector<rtm::GpuMesh> gpuMeshes;
+    gpuMeshes.reserve(scene.meshes.size());
+    for (const rtm::Mesh& m : scene.meshes) gpuMeshes.emplace_back(m);
+    rtm::GpuScene gpuScene;
+    gpuScene.upload(scene);
+
+    GLuint emptyVao = 0;  // core profile needs a bound VAO even for attribute-less draws
+    glGenVertexArrays(1, &emptyVao);
+
     rtm::Camera camera;
+    camera.position = {0.0f, 1.6f, 6.0f};  // hallway entrance, looking down the hall (-Z)
     SpotLight light;
+    std::vector<float> yawDeg(scene.instances.size(), 0.0f);
+    for (size_t i = 0; i < scene.instances.size(); ++i)
+        yawDeg[i] = glm::degrees(glm::eulerAngles(scene.instances[i].transform.rotation).y);
 
     glEnable(GL_DEPTH_TEST);
     GL_CHECK("init");
 
-    bool f5WasDown = false, fWasDown = false;
+    bool f5WasDown = false, fWasDown = false, tWasDown = false;
     double lastTime = glfwGetTime();
     int frame = 0;
 
@@ -93,12 +153,15 @@ int main(int argc, char** argv) {
             (glfwGetKey(h, GLFW_KEY_TAB) == GLFW_PRESS || glfwGetKey(h, GLFW_KEY_ESCAPE) == GLFW_PRESS))
             window.setCursorCaptured(false);
 
-        const bool f5 = glfwGetKey(h, GLFW_KEY_F5) == GLFW_PRESS;
-        if (f5 && !f5WasDown) shader.reload();
-        f5WasDown = f5;
-        const bool fKey = glfwGetKey(h, GLFW_KEY_F) == GLFW_PRESS;
-        if (fKey && !fWasDown && !io.WantCaptureKeyboard) camera.fly = !camera.fly;
-        fWasDown = fKey;
+        auto pressed = [&](int key, bool& wasDown) {
+            const bool down = glfwGetKey(h, key) == GLFW_PRESS;
+            const bool edge = down && !wasDown && (!io.WantCaptureKeyboard || window.cursorCaptured());
+            wasDown = down;
+            return edge;
+        };
+        if (pressed(GLFW_KEY_F5, f5WasDown)) { rasterShader.reload(); castShader.reload(); }
+        if (pressed(GLFW_KEY_F, fWasDown)) camera.fly = !camera.fly;
+        if (pressed(GLFW_KEY_T, tWasDown)) mode = mode == RenderMode::Raster ? RenderMode::Cast : RenderMode::Raster;
 
         if (!io.WantCaptureKeyboard || window.cursorCaptured())
             camera.update(h, dt, window.cursorCaptured());
@@ -109,13 +172,31 @@ int main(int argc, char** argv) {
         ImGui::Begin("Museum", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("%.1f fps (%.2f ms)", io.Framerate, 1000.0f / io.Framerate);
         ImGui::Text("GPU: %s", reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
-        ImGui::Text("Triangles: %zu", scene.triangleCount());
+        ImGui::Text("Triangles: %zu (%zu instances)", scene.triangleCount(), scene.instances.size());
         ImGui::Text("Camera: %.2f %.2f %.2f", camera.position.x, camera.position.y, camera.position.z);
         ImGui::Separator();
+        int modeInt = static_cast<int>(mode);
+        ImGui::RadioButton("Raster", &modeInt, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Ray cast (T)", &modeInt, 1);
+        mode = static_cast<RenderMode>(modeInt);
+        if (mode == RenderMode::Cast) ImGui::Combo("View", &castView, "Shaded + shadows\0Normals\0Instance ID\0");
         ImGui::Checkbox("Fly mode (F)", &camera.fly);
         ImGui::SliderFloat("Move speed", &camera.moveSpeed, 0.5f, 10.0f);
         ImGui::SliderFloat("FOV", &camera.fovY, 30.0f, 100.0f);
-        if (ImGui::CollapsingHeader("Spotlight", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Exhibits", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool moved = false;
+            for (size_t i = 0; i < scene.instances.size(); ++i) {
+                rtm::Instance& inst = scene.instances[i];
+                if (!inst.exhibit) continue;
+                if (ImGui::SliderFloat(inst.name.c_str(), &yawDeg[i], -180.0f, 180.0f, "%.0f deg")) {
+                    inst.transform.rotation = glm::angleAxis(glm::radians(yawDeg[i]), glm::vec3(0, 1, 0));
+                    moved = true;
+                }
+            }
+            if (moved) gpuScene.updateInstances(scene);  // TLAS + instance texture only; BLAS untouched
+        }
+        if (ImGui::CollapsingHeader("Spotlight")) {
             ImGui::DragFloat3("Position", &light.position.x, 0.05f);
             ImGui::DragFloat3("Target", &light.target.x, 0.05f);
             ImGui::ColorEdit3("Color", &light.color.x);
@@ -124,7 +205,7 @@ int main(int argc, char** argv) {
             ImGui::SliderFloat("Outer cone", &light.outerDeg, light.innerDeg, 80.0f);
             ImGui::SliderFloat("Ambient", &light.ambient, 0.0f, 0.5f);
         }
-        if (ImGui::Button("Reload shaders (F5)")) shader.reload();
+        if (ImGui::Button("Reload shaders (F5)")) { rasterShader.reload(); castShader.reload(); }
         ImGui::TextDisabled("Click view to look, Tab/Esc to release");
         ImGui::End();
 
@@ -136,20 +217,28 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         if (fbw > 0 && fbh > 0) {
-            const glm::mat4 model(1.0f);
-            shader.use();
-            shader.set("uModel", model);
-            shader.set("uView", camera.view());
-            shader.set("uProj", camera.projection(static_cast<float>(fbw) / static_cast<float>(fbh)));
-            shader.set("uNormalMatrix", glm::mat3(glm::transpose(glm::inverse(model))));
-            shader.set("uCameraPos", camera.position);
-            shader.set("uLightPos", light.position);
-            shader.set("uLightDir", glm::normalize(light.target - light.position));
-            shader.set("uLightColor", light.color * light.intensity);
-            shader.set("uCosInner", std::cos(glm::radians(light.innerDeg)));
-            shader.set("uCosOuter", std::cos(glm::radians(light.outerDeg)));
-            shader.set("uAmbient", light.ambient);
-            scene.draw();
+            const glm::mat4 view = camera.view();
+            const glm::mat4 proj = camera.projection(static_cast<float>(fbw) / static_cast<float>(fbh));
+            if (mode == RenderMode::Raster) {
+                rasterShader.use();
+                rasterShader.set("uView", view);
+                rasterShader.set("uProj", proj);
+                rasterShader.set("uCameraPos", camera.position);
+                light.apply(rasterShader);
+                drawRaster(scene, gpuMeshes, rasterShader);
+            } else {
+                castShader.use();
+                gpuScene.bind(castShader.id());
+                castShader.set("uInvViewProj", glm::inverse(proj * view));
+                castShader.set("uCameraPos", camera.position);
+                castShader.set("uView", castView);
+                light.apply(castShader);
+                glDisable(GL_DEPTH_TEST);
+                glBindVertexArray(emptyVao);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+                glBindVertexArray(0);
+                glEnable(GL_DEPTH_TEST);
+            }
         }
 
         ImGui::Render();
@@ -159,6 +248,7 @@ int main(int argc, char** argv) {
         if (smokeOut && ++frame == 30) {
             const bool ok = saveScreenshot(smokeOut, fbw, fbh) && !rtm::checkGLErrors("smoke test", __FILE__, __LINE__);
             std::printf("[smoke-test] %s -> %s\n", ok ? "OK" : "FAILED", smokeOut);
+            glDeleteVertexArrays(1, &emptyVao);
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplGlfw_Shutdown();
             ImGui::DestroyContext();
@@ -167,6 +257,7 @@ int main(int argc, char** argv) {
         window.swap();
     }
 
+    glDeleteVertexArrays(1, &emptyVao);
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
