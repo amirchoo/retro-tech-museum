@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "Windows (Visual Studio, newest installed)",
+      "binaryDir": "${sourceDir}/build/windows",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "mac",
+      "displayName": "macOS (Makefiles, Release)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/mac",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
+    },
+    {
+      "name": "mac-debug",
+      "inherits": "mac",
+      "displayName": "macOS (Makefiles, Debug)",
+      "binaryDir": "${sourceDir}/build/mac-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows", "configurePreset": "windows", "configuration": "Release" },
+    { "name": "windows-debug", "configurePreset": "windows", "configuration": "Debug" },
+    { "name": "mac", "configurePreset": "mac", "jobs": 8 },
+    { "name": "mac-debug", "configurePreset": "mac-debug", "jobs": 8 }
+  ]
+}

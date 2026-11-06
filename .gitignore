@@ -1,0 +1,31 @@
+# build output
+build/
+out/
+cmake-build-*/
+*.exe
+*.pdb
+*.ilk
+*.obj.tmp
+
+# IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.xcodeproj/
+CMakeUserPresets.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# runtime
+imgui.ini
+*.log
+screenshots/
+
+# secrets (none should exist, but just in case)
+.env
+*.pem

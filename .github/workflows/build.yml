@@ -1,0 +1,62 @@
+name: build
+
+# Every PR into main must compile on BOTH Windows and macOS, and every shader
+# must be valid GLSL 410 -- so a Windows-only GL feature can't break the Mac build.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shaders:
+    name: GLSL 410 check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install glslang
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq glslang-tools
+      - name: Every shader must start with '#version 410 core'
+        run: |
+          bad=0
+          for f in $(find shaders -name '*.vert' -o -name '*.frag' -o -name '*.glsl'); do
+            first=$(grep -m1 -v '^\s*$' "$f" | tr -d '\r')
+            if [ "$first" != "#version 410 core" ]; then
+              echo "::error file=$f::first line must be '#version 410 core' (got: $first)"; bad=1
+            fi
+          done
+          exit $bad
+      - name: Compile shaders with glslangValidator
+        run: |
+          shopt -s nullglob
+          files=(shaders/*.vert shaders/*.frag)
+          glslangValidator "${files[@]}"
+
+  build:
+    name: ${{ matrix.os }}
+    needs: shaders
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            preset: windows
+          - os: macos-latest
+            preset: mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache FetchContent downloads
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.preset }}/_deps/*-src
+          key: deps-${{ matrix.os }}-${{ hashFiles('CMakeLists.txt') }}
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
