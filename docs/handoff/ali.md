@@ -65,4 +65,4 @@ Proposal mismatches to fix in the report:
 
 ## Git
 
-`git checkout -b ali/raster-pbr` → small commits → PR into `main` → CI green → merge.
+`git checkout -b ali/raster-pbr` → small commits → PR into `dev` (the default branch; never `main`) → CI green → merge.

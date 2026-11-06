@@ -68,9 +68,14 @@ macOS stops at **OpenGL 4.1**. Windows drivers will happily run newer features t
 
 ## Workflow
 
-1. `git checkout -b <name>/<feature>` (e.g. `hajik/tracer-bvh-traversal`)
-2. Commit small, push, open a PR into `main`
-3. CI must be green (Windows + macOS + GLSL check) before merging
+```
+your-name/feature  --PR-->  dev (integration, default branch)  --PR-->  main (production)
+```
+
+1. `git checkout dev && git pull`, then `git checkout -b <name>/<feature>` (e.g. `hajik/path-tracer`)
+2. Commit small, push, open a PR **into `dev`**. CI must be green (Windows + macOS + GLSL check)
+3. When `dev` is stable and demo-ready, 아미르 opens a PR `dev → main`. Only `dev` can merge into `main`, it needs 1 approval, and it uses a merge commit (not squash)
+4. Nobody pushes directly to `dev` or `main`. Rulesets live in `.github/rulesets/` (apply with `bash tools/apply_rulesets.sh`)
 
 ## Layout
 

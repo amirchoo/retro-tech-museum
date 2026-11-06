@@ -1,12 +1,13 @@
 name: build
 
-# Every PR into main must compile on BOTH Windows and macOS, and every shader
-# must be valid GLSL 410 -- so a Windows-only GL feature can't break the Mac build.
+# Branch flow:  feature branch --PR--> dev (integration) --PR--> main (production)
+# Every PR must compile on BOTH Windows and macOS, and every shader must be valid
+# GLSL 410 -- so a Windows-only GL feature can't break the Mac build.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 concurrency:
@@ -14,6 +15,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Required on main: production only takes merges from dev.
+  source-branch:
+    name: PR source check
+    runs-on: ubuntu-latest
+    steps:
+      - name: PRs into main must come from dev
+        if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.head_ref != 'dev'
+        run: |
+          echo "::error::PRs into main must come from dev (got '${{ github.head_ref }}'). Open your PR against dev."
+          exit 1
+      - run: echo ok
+
+
   shaders:
     name: GLSL 410 check
     runs-on: ubuntu-latest
