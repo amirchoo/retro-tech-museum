@@ -30,6 +30,14 @@
 #include "scene/scene.h"
 #include "scene/gallery.h"
 
+#ifdef _WIN32
+// Laptops with Intel + NVIDIA/AMD otherwise start us on the slow integrated GPU.
+extern "C" {
+__declspec(dllexport) unsigned long NvOptimusEnablement = 1;
+__declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
+}
+#endif
+
 namespace {
 
 enum class RenderMode { Raster = 0, Cast = 1 };  // Cast -> PathTrace once 하직's tracer lands
