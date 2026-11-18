@@ -50,7 +50,7 @@ museum --smoke-test out.png             # renders 30 frames, saves a screenshot,
 | Tab / Esc | release mouse (use ImGui) |
 | WASD, Shift | move, sprint |
 | F | toggle fly mode (Space / Ctrl = up / down) |
-| T | toggle raster / ray cast |
+| T | toggle raster / path tracing |
 | F5 | reload shaders from disk (no rebuild needed) |
 
 ## Rules (read this — it keeps the Mac build alive)
@@ -68,9 +68,14 @@ macOS stops at **OpenGL 4.1**. Windows drivers will happily run newer features t
 
 ## Workflow
 
-1. `git checkout -b <name>/<feature>` (e.g. `hajik/tracer-bvh-traversal`)
-2. Commit small, push, open a PR into `main`
-3. CI must be green (Windows + macOS + GLSL check) before merging
+```
+your-name/feature  --PR-->  dev (integration, default branch)  --PR-->  main (production)
+```
+
+1. `git checkout dev && git pull`, then `git checkout -b <name>/<feature>` (e.g. `hajik/path-tracer`)
+2. Commit small, push, open a PR **into `dev`**. CI must be green (Windows + macOS + GLSL check)
+3. When `dev` is stable and demo-ready, 아미르 opens a PR `dev → main`. Only `dev` can merge into `main`, it needs 1 approval, and it uses a merge commit (not squash)
+4. Nobody pushes directly to `dev` or `main`. Rulesets live in `.github/rulesets/` (apply with `bash tools/apply_rulesets.sh`)
 
 ## Layout
 
@@ -86,3 +91,27 @@ external/glad/ generated loader: OpenGL 4.1 core (don't edit)
 ```
 
 The hallway layout (6 pedestals + arcade) lives in `src/scene/gallery.*`. Exhibits are placeholder boxes until the OBJ loader lands. See `docs/HANDOFF.md`.
+
+## Progressive path tracer
+
+Press **T** to switch raster / path tracing. The Museum panel also offers
+**Split comparison** (raster left, tracer right) and the original **Debug ray cast**.
+Release the mouse with Tab/Esc, then drag the divider or use its slider.
+Start at resolution **0.5**, **1 sample/frame**, **4 bounces**; lower the resolution
+to **0.25** on an integrated GPU. The stationary image accumulates samples;
+camera, FOV, exhibit, light, resolution and shader changes reset it automatically.
+
+Enable **Material test scene** to inspect a polished metal sphere, clear glass
+sphere and an emissive target. The team's normal gallery remains the default.
+The constant-material raster baseline shares the tracer's GGX BRDF, light
+parameters and exposure/tonemap. Raster shadow/normal maps and final exhibit
+assets remain the other module handoffs.
+
+```powershell
+.\build\windows\Release\museum.exe --mode trace
+.\build\windows\Release\museum.exe --mode split --test-scene
+.\build\windows\Release\museum.exe --mode trace --scale 0.25 --spp 4 --bounces 6 --frames 50 --no-ui --smoke-test trace.png
+```
+
+See [docs/PATH_TRACER.md](docs/PATH_TRACER.md) for implementation details,
+integration points, validation commands and remaining team dependencies.

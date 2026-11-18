@@ -65,4 +65,4 @@ Raster and tracer have to light the scene identically, or the comparison is mean
 
 ## Git
 
-`git checkout -b hajik/path-tracer` → small commits → PR into `main` → CI green → merge.
+`git checkout -b hajik/path-tracer` → small commits → PR into `dev` (the default branch; never `main`) → CI green → merge.

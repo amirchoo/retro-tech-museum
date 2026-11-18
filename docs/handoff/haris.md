@@ -89,4 +89,4 @@ Add tests in the style of `tests/test_gpu_layout.cpp` (it uses the tiny `TEST`/`
 
 ## Git
 
-`git checkout -b haris/obj-loader` → small commits → PR into `main` → CI green → merge. Don't commit `build/`, and don't commit 4K textures.
+`git checkout -b haris/obj-loader` → small commits → PR into `dev` (the default branch; never `main`) → CI green → merge. Don't commit `build/`, and don't commit 4K textures.

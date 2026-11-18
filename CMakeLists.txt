@@ -116,3 +116,13 @@ add_executable(rtm_tests tests/test_main.cpp tests/test_gpu_layout.cpp)
 target_link_libraries(rtm_tests PRIVATE rtm)
 rtm_warnings(rtm_tests)
 add_test(NAME rtm_tests COMMAND rtm_tests)
+
+# Optional integration tests need a working OpenGL 4.1 display/context.
+option(RTM_BUILD_GPU_TESTS "Build path tracer OpenGL integration tests" OFF)
+if(RTM_BUILD_GPU_TESTS)
+    add_executable(rtm_tracer_tests tests/test_path_tracer_gl.cpp)
+    target_link_libraries(rtm_tracer_tests PRIVATE rtm)
+    rtm_warnings(rtm_tracer_tests)
+    add_test(NAME rtm_tracer_tests COMMAND rtm_tracer_tests)
+    set_tests_properties(rtm_tracer_tests PROPERTIES SKIP_RETURN_CODE 77)
+endif()
